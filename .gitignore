@@ -1,0 +1,8 @@
+# ignore the following file types
+
+# vim
+*.swp
+
+# haskell
+*.o
+*.hi
