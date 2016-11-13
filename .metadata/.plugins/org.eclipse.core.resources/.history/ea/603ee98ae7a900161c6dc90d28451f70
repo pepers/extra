@@ -1,0 +1,97 @@
+import java.util.ArrayList;
+
+public class MyBot {
+    public static void main(String[] args) throws java.io.IOException {
+        InitPackage iPackage = Networking.getInit();
+        int myID = iPackage.myID;
+        GameMap gameMap = iPackage.map;
+
+        Networking.sendInit("MyJavaBot");
+
+        while(true) {
+            ArrayList<Move> moves = new ArrayList<Move>();
+
+            gameMap = Networking.getFrame();
+
+            for(int y = 0; y < gameMap.height; y++) {
+                for(int x = 0; x < gameMap.width; x++) {
+                    Site site = gameMap.getSite(new Location(x, y));
+                    if(site.owner == myID) {
+                        Direction dir = getDirection(gameMap, site, x, y);
+                        moves.add(new Move(new Location(x, y), dir));
+                    }
+                }
+            }
+            Networking.sendFrame(moves);
+        }
+    }
+    
+    private static Direction getDirection(GameMap map, Site site, int x, int y) {
+    	Site[] neighbours = getNeighbours(map, x, y);
+    	for (int i=0; i<4; i++) {
+    		if (canWinAttack(site, neighbours[i])) {
+    			return calcDirection(i);
+    		} 
+    	}
+    	for (int i=0; i<4; i++) {
+    		if (canHelpNeighbour(site, neighbours[i])) {
+    			return calcDirection(i);
+    		}
+    	}
+    	if (site.strength < 255) {
+    		return Direction.STILL;
+    	} 
+    	return Direction.randomDirection();
+    }
+    
+    /**
+     * return the sites of the surrounding four spaces
+     */
+    private static Site[] getNeighbours(GameMap map, int x, int y) {
+    	Site[] neighbours = new Site[4];
+    	int height = map.height;
+    	int width  = map.width;
+    	Location[] locs = new Location[4];
+    	// north, east, south, west
+    	locs[0] = (y-1<0)      ? new Location(x, height) : new Location(x, y-1); 
+    	locs[0] = (x+1>width)  ? new Location(0, y)      : new Location(x+1, y); 
+    	locs[0] = (y+1>height) ? new Location(x, 0)      : new Location(x, y+1); 
+    	locs[0] = (x-1<0)      ? new Location(width, 0)  : new Location(x-1, y);
+    	for (int i=0; i<4; i++) {
+    		neighbours[i] = map.getSite(locs[i]);
+    	}
+    	return neighbours;
+    }
+    
+    /**
+     * checks to see if you can win against enemy, 
+     * and take territory
+     */
+    private static boolean canWinAttack(Site me, Site enemy) {
+    	if (enemy.owner == me.owner) return false; // not enemy
+    	return (me.strength > enemy.strength) ? true : false; 
+    }
+    
+    /**
+     * determines if I can add to the strength of my neighbour
+     */
+    private static boolean canHelpNeighbour(Site me, Site neighbour) {
+    	if (neighbour.owner != me.owner) return false; // neighbour isn't me
+    	return (me.strength + neighbour.strength <= 255) ? true : false; 
+    }
+    
+    /**
+     * helper method to get direction
+     * @param i = 0,1,2,or 3 
+     * @return corresponding direction
+     */
+    private static Direction calcDirection(int i) {
+    	switch(i) {
+			case 0  : return Direction.NORTH;
+			case 1  : return Direction.EAST;
+			case 2  : return Direction.SOUTH;
+			case 3  : return Direction.WEST;
+			default : return Direction.STILL;
+    	}
+    }
+}
