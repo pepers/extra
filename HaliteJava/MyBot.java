@@ -29,6 +29,8 @@ public class MyBot {
     
     private static Direction getDirection(GameMap map, Site site, int x, int y) {
     	Site[] neighbours = getNeighbours(map, x, y);
+    	
+    	// check all four surrounding neighbours in random order
     	int offset = new Random().nextInt(4);
     	for (int i=offset; i<4+offset; i++) {
     		int j = i;
@@ -37,10 +39,18 @@ public class MyBot {
     			return calcDirection(j);
     		} 
     	}
+    	
+    	// if max strength, charge to nearest border
     	if (site.strength >= 255) return directionToClosestBorder(map, site.owner, x, y);
-    	if (site.strength < site.production * 5) {
-    		return Direction.STILL;
-    	} 
+    	
+    	// wait if I don't own all neighbouring sites
+    	for (int i=0; i<4; i++) {
+    		if (neighbours[i].owner != site.owner) {
+    			return Direction.STILL;
+    		}
+    	}
+    	
+    	// try to help myself grow a site to max strength
     	for (int i=offset; i<4+offset; i++) {
     		int j = i;
     		if (j >= 4) j = j-4;
@@ -48,7 +58,7 @@ public class MyBot {
     			return calcDirection(j);
     		}
     	}    	
-    	return Direction.STILL;
+    	return Direction.randomDirection();
     }
     
     /**
@@ -152,7 +162,6 @@ public class MyBot {
     private static boolean canHelpNeighbour(Site me, Site neighbour) {
     	if (neighbour.owner != me.owner) return false; // neighbour isn't me
     	if (me.strength < 1) return false; // can't help with no strength
-    	if (new Random().nextDouble() > 0.75) return false; // chance to not help
     	return (me.strength + neighbour.strength <= 255) ? true : false; 
     }
     
