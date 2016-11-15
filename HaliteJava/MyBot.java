@@ -1,4 +1,9 @@
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
 public class MyBot {
@@ -13,56 +18,185 @@ public class MyBot {
             ArrayList<Move> moves = new ArrayList<Move>();
 
             gameMap = Networking.getFrame();
+            
+            // all pieces owned by bot
+            Map<Piece,Site> pieces = new HashMap<Piece,Site>();
 
+            // get all bot's pieces
             for(int y = 0; y < gameMap.height; y++) {
                 for(int x = 0; x < gameMap.width; x++) {
                     Site site = gameMap.getSite(new Location(x, y));
                     if(site.owner == myID) {
-                        Direction dir = getDirection(gameMap, site, x, y);
-                        moves.add(new Move(new Location(x, y), dir));
+                    	pieces.put(new Piece(new Location(x,y),gameMap),site);
                     }
                 }
             }
+            
+            // expand into new territory (enemy, or not owned)
+            moves.addAll(expandTerritory(pieces,gameMap));
+            
+            // help out friendly neighbour pieces
+            moves.addAll(helpNeighbours(pieces,gameMap));
+            
+            // max strength, charge!
+            moves.addAll(maxStrengthCharge(pieces,gameMap));
+           
             Networking.sendFrame(moves);
         }
     }
     
-    private static Direction getDirection(GameMap map, Site site, int x, int y) {
-    	Site[] neighbours = getNeighbours(map, x, y);
-    	
-    	// check all four surrounding neighbours in random order
-    	int offset = new Random().nextInt(4);
-    	for (int i=offset; i<4+offset; i++) {
-    		int j = i;
-    		if (j >= 4) j = j-4;
-    		if (canWinAttack(site, neighbours[j])) {
-    			return calcDirection(j);
-    		} 
+    /**
+     * updates a site on the game map
+     * @param map :the game map
+     * @param l   :location of site to replace
+     * @param s   :site to replace with
+     */
+    private static void update(GameMap map, Location l, Site s) {
+    	(map.contents).get(l.y).set(l.x, s);
+    }
+    
+    /**
+     * attempt to expand territory into surrounding unowned spaces
+     * @param pieces :all currently owned pieces
+     * @param map    :the game map
+     * @return       :a list of any territory expanding moves
+     */
+    private static ArrayList<Move> expandTerritory(Map<Piece,Site> pieces, GameMap map) {
+    	ArrayList<Move> frontline = new ArrayList<Move>();
+    	Iterator<Map.Entry<Piece,Site>> iter = pieces.entrySet().iterator();
+    	while (iter.hasNext()) {
+    		Map.Entry<Piece,Site> entry = iter.next();
+    		Site site                   = entry.getValue();
+    		Piece piece                 = entry.getKey();  
+    		Location[] nearby           = (piece).getNearbyLocations();    		
+    		int offset                  = new Random().nextInt(4);
+        	for (int i=offset; i<4+offset; i++) {
+        		int j = i;
+        		if (j >= 4) j = j-4;
+        		Site neighbour = map.getSite(nearby[j]);
+        		if ((neighbour.owner != site.owner) &&
+        				(neighbour.strength < site.strength)) {
+        			// update site moving away from
+        			Site oldSite = site;
+        			oldSite.strength = 0;
+        			update(map,piece.getLocation(),oldSite);
+        			
+        			// move to new site
+        			frontline.add(piece.move(calcDirection(j)));
+        			
+        			// update new site
+        			site.strength -= neighbour.strength;
+        			update(map,piece.getLocation(),site);
+        			
+        			// remove piece from pieces that need to still move
+        			iter.remove();
+        			break;
+        		} 
+        	}
     	}
-    	
-    	// if max strength, charge to nearest border
-    	if (site.strength >= 255) return directionToClosestBorder(map, site.owner, x, y);
-    	
-    	// wait if I don't own all neighbouring sites
-    	for (int i=0; i<4; i++) {
-    		if (neighbours[i].owner != site.owner) {
-    			return Direction.STILL;
+    	return frontline;
+    }
+    
+    /**
+     * Try to help friendly neighbour pieces get max strength
+     * @param pieces :all currently owned pieces
+     * @param map    :the game map
+     * @return       :list of moves for helping pieces
+     */
+    private static ArrayList<Move> helpNeighbours(Map<Piece,Site> pieces, GameMap map) {
+    	ArrayList<Move> helpers = new ArrayList<Move>();
+    	List<Site> alreadyHelped = new LinkedList<Site>();
+    	Iterator<Map.Entry<Piece,Site>> iter = pieces.entrySet().iterator();
+    	while (iter.hasNext()) {
+    		Map.Entry<Piece,Site> entry = iter.next();
+    		Site site                   = entry.getValue();
+    		if (alreadyHelped.contains(site)) continue;
+    		Piece piece                 = entry.getKey();  
+    		Location[] nearby           = (piece).getNearbyLocations();    		
+    		int offset                  = new Random().nextInt(4);
+        	for (int i=offset; i<4+offset; i++) {
+        		int j = i;
+        		if (j >= 4) j = j-4;
+        		Site neighbour = map.getSite(nearby[j]);
+        		int combinedStrength = neighbour.strength + site.strength;
+        		
+        		// if can join with friendly neighbour to make max strength
+        		if ((neighbour.owner == site.owner) && 
+        				(combinedStrength <= 255) &&
+        				(combinedStrength >= 240)) {
+        			alreadyHelped.add(neighbour);
+        			
+        			// update site moving away from
+        			Site oldSite = site;
+        			oldSite.strength = 0;
+        			update(map,piece.getLocation(),oldSite);
+        			
+        			// move to new site
+        			helpers.add(piece.move(calcDirection(j)));
+        			
+        			// update new site
+        			site.strength += neighbour.strength;
+        			update(map,piece.getLocation(),site);
+        			
+        			// remove piece from pieces that need to still move
+        			iter.remove();
+        			break;
+        		}
+        	}    		
+    	}
+    	return helpers;
+    }
+    
+    /**
+     * Try to make it to nearest border if already max strength
+     * @param pieces :all currently owned pieces
+     * @param map    :the game map
+     * @return       :list of moves for charging pieces
+     */
+    private static ArrayList<Move> maxStrengthCharge(Map<Piece,Site> pieces, GameMap map) {
+    	ArrayList<Move> charging = new ArrayList<Move>();
+    	Iterator<Map.Entry<Piece,Site>> iter = pieces.entrySet().iterator();
+    	while (iter.hasNext()) {
+    		Map.Entry<Piece,Site> entry = iter.next();
+    		Site site                   = entry.getValue();
+    		Piece piece                 = entry.getKey();  
+    		if (site.strength >= 255) {
+    			// direction to closest border (TODO: take lowest strength path)
+    			Direction dir = directionToClosestBorder(map, site.owner, piece.getLocation().x, piece.getLocation().y);
+    			
+    			// don't run over other high strength pieces
+    			if (map.getSite(piece.getLocation(), dir).strength >= 240) {
+    				charging.add(piece.move(Direction.STILL));
+    				iter.remove();
+    				continue;
+    			}
+    			
+    			// update site moving away from
+    			Site oldSite = site;
+    			oldSite.strength = 0;
+    			update(map,piece.getLocation(),oldSite);
+    			
+    			// move to new site
+    			charging.add(piece.move(dir));
+    			
+    			// update new site
+    			site.strength = 255;
+    			update(map,piece.getLocation(),site);
+    			
+    			// remove piece from pieces that need to still move
+    			iter.remove();
     		}
     	}
-    	
-    	// try to help myself grow a site to max strength
-    	for (int i=offset; i<4+offset; i++) {
-    		int j = i;
-    		if (j >= 4) j = j-4;
-    		if (canHelpNeighbour(site, neighbours[j])) {
-    			return calcDirection(j);
-    		}
-    	}    	
-    	return Direction.randomDirection();
+    	return charging;
     }
     
     /**
      * find the direction of the closest border to my territory
+     * @param map   :the game map
+     * @param owner :the owner of the piece
+     * @param x     :x-coordinate of piece
+     * @param y     :y-coordinate of piece
+     * @return
      */
     private static Direction directionToClosestBorder(GameMap map, int owner, int x, int y) {
     	Direction dir = Direction.randomDirection();
@@ -126,43 +260,6 @@ public class MyBot {
     		dir = dirY;
     	} 
     	return dir;
-    }
-    
-    /**
-     * return the sites of the surrounding four spaces
-     */
-    private static Site[] getNeighbours(GameMap map, int x, int y) {
-    	Site[] neighbours = new Site[4];
-    	int height = map.height-1;
-    	int width  = map.width-1;
-    	Location[] locs = new Location[4];
-    	// north, east, south, west
-    	locs[0] = (y-1<0)      ? new Location(x, height) : new Location(x, y-1); 
-    	locs[1] = (x+1>width)  ? new Location(0, y)      : new Location(x+1, y); 
-    	locs[2] = (y+1>height) ? new Location(x, 0)      : new Location(x, y+1); 
-    	locs[3] = (x-1<0)      ? new Location(width, 0)  : new Location(x-1, y);
-    	for (int i=0; i<4; i++) {
-    		neighbours[i] = map.getSite(locs[i]);
-    	}
-    	return neighbours;
-    }
-    
-    /**
-     * checks to see if you can win against enemy, 
-     * and take territory
-     */
-    private static boolean canWinAttack(Site me, Site enemy) {
-    	if (enemy.owner == me.owner) return false; // not enemy
-    	return (me.strength > enemy.strength) ? true : false; 
-    }
-    
-    /**
-     * determines if I can add to the strength of my neighbour
-     */
-    private static boolean canHelpNeighbour(Site me, Site neighbour) {
-    	if (neighbour.owner != me.owner) return false; // neighbour isn't me
-    	if (me.strength < 1) return false; // can't help with no strength
-    	return (me.strength + neighbour.strength <= 255) ? true : false; 
     }
     
     /**
