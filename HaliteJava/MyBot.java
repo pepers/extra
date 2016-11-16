@@ -36,7 +36,20 @@ public class MyBot {
             moves.addAll(expandTerritory(pieces,gameMap));
            
             // move strong reinforcements towards closest border
-            moves.addAll(reinforcments(pieces,gameMap));
+            //moves.addAll(reinforcments(pieces,gameMap));
+            Iterator<Map.Entry<Piece,Site>> iter = pieces.entrySet().iterator();
+        	while (iter.hasNext()) {
+        		Map.Entry<Piece,Site> entry = iter.next();
+        		Site site                   = entry.getValue();
+        		Piece piece                 = entry.getKey(); 
+        		Location loc                = piece.getLocation();
+        		Direction closest           = directionToClosestBorder(gameMap,myID,loc.x,loc.y);
+        		Site neighbour              = gameMap.getSite(loc,closest);
+        		if (neighbour.strength < site.strength) {
+        			moves.add(piece.move(closest));
+        			iter.remove();
+        		}
+        	}
            
             Networking.sendFrame(moves);
         }
