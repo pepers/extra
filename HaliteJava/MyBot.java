@@ -1,19 +1,45 @@
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
 public class MyBot {
+	
+	public static Direction[][] spiral;
+	
     public static void main(String[] args) throws java.io.IOException {
         InitPackage iPackage = Networking.getInit();
         int myID = iPackage.myID;
         GameMap gameMap = iPackage.map;
-
+        
+        // find the where the bot starts (center of spiral)
+        Location center = new Location(0,0);
+        boolean centerFound = false;
+        for(int y = 0; y<gameMap.height; y++) {
+            for(int x = 0; x<gameMap.width; x++) {
+            	Location loc = new Location(x,y);
+                Site site = gameMap.getSite(loc);
+                if(site.owner == myID) {  
+                	center = loc;
+                	centerFound = true;
+                	break;
+                }
+            }
+            if (centerFound) break;
+        }
+        
+        // create spiral with directions
+//        spiral = new Direction[gameMap.height][gameMap.width];
+//        for (int i=0; i<gameMap.height; i++) {
+//        	for (int j=0; j<gameMap.width; j++) {
+//        		spiral[i][j] = calculateSpiralDirection(center, new Location(i,j), gameMap);
+//        	}
+//        }
+        spiral = calculateCenterSpiral(new Location(gameMap.height/2,gameMap.width/2),gameMap);
+        
         Networking.sendInit("MyJavaBot");
-
+        
         while(true) {
             ArrayList<Move> moves = new ArrayList<Move>();
 
@@ -25,9 +51,10 @@ public class MyBot {
             // get all bot's pieces
             for(int y = 0; y < gameMap.height; y++) {
                 for(int x = 0; x < gameMap.width; x++) {
-                    Site site = gameMap.getSite(new Location(x, y));
+                	Location loc = new Location(x,y);
+                    Site site = gameMap.getSite(loc);
                     if(site.owner == myID) {
-                    	pieces.put(new Piece(new Location(x,y),gameMap),site);
+                    	pieces.put(new Piece(loc,gameMap,spiral[y][x]),site);
                     }
                 }
             }
@@ -35,24 +62,11 @@ public class MyBot {
             // expand into new territory (enemy, or not owned)
             moves.addAll(expandTerritory(pieces,gameMap));
             
-            // help out friendly neighbour pieces
-            moves.addAll(helpNeighbours(pieces,gameMap));
-            
-            // max strength, charge!
-            moves.addAll(maxStrengthCharge(pieces,gameMap));
+            // spiral time!
+            moves.addAll(spiral(pieces,gameMap));
            
             Networking.sendFrame(moves);
         }
-    }
-    
-    /**
-     * updates a site on the game map
-     * @param map :the game map
-     * @param l   :location of site to replace
-     * @param s   :site to replace with
-     */
-    private static void update(GameMap map, Location l, Site s) {
-    	(map.contents).get(l.y).set(l.x, s);
     }
     
     /**
@@ -76,19 +90,9 @@ public class MyBot {
         		Site neighbour = map.getSite(nearby[j]);
         		if ((neighbour.owner != site.owner) &&
         				(neighbour.strength < site.strength)) {
-        			// update site moving away from
-        			Site oldSite = site;
-        			oldSite.strength = 0;
-        			update(map,piece.getLocation(),oldSite);
-        			
-        			// move to new site
-        			frontline.add(piece.move(calcDirection(j)));
-        			
-        			// update new site
-        			site.strength -= neighbour.strength;
-        			update(map,piece.getLocation(),site);
-        			
-        			// remove piece from pieces that need to still move
+        			Direction newDirection = calcDirection(j);
+        			Location newLoc = map.getLocation(piece.getLocation(), newDirection);
+        			frontline.add(piece.move(newDirection,spiral[newLoc.y][newLoc.x]));
         			iter.remove();
         			break;
         		} 
@@ -98,168 +102,29 @@ public class MyBot {
     }
     
     /**
-     * Try to help friendly neighbour pieces get max strength
+     * attempt to spiral outwards, bringing strength to the front lines
      * @param pieces :all currently owned pieces
      * @param map    :the game map
-     * @return       :list of moves for helping pieces
+     * @return       :a list of spiraling moves
      */
-    private static ArrayList<Move> helpNeighbours(Map<Piece,Site> pieces, GameMap map) {
-    	ArrayList<Move> helpers = new ArrayList<Move>();
-    	List<Site> alreadyHelped = new LinkedList<Site>();
-    	Iterator<Map.Entry<Piece,Site>> iter = pieces.entrySet().iterator();
-    	while (iter.hasNext()) {
-    		Map.Entry<Piece,Site> entry = iter.next();
-    		Site site                   = entry.getValue();
-    		if (alreadyHelped.contains(site)) continue;
-    		Piece piece                 = entry.getKey();  
-    		Location[] nearby           = (piece).getNearbyLocations();    		
-    		int offset                  = new Random().nextInt(4);
-        	for (int i=offset; i<4+offset; i++) {
-        		int j = i;
-        		if (j >= 4) j = j-4;
-        		Site neighbour = map.getSite(nearby[j]);
-        		int combinedStrength = neighbour.strength + site.strength;
-        		
-        		// if can join with friendly neighbour to make max strength
-        		if ((neighbour.owner == site.owner) && 
-        				(combinedStrength <= 255) &&
-        				(combinedStrength >= 240)) {
-        			alreadyHelped.add(neighbour);
-        			
-        			// update site moving away from
-        			Site oldSite = site;
-        			oldSite.strength = 0;
-        			update(map,piece.getLocation(),oldSite);
-        			
-        			// move to new site
-        			helpers.add(piece.move(calcDirection(j)));
-        			
-        			// update new site
-        			site.strength += neighbour.strength;
-        			update(map,piece.getLocation(),site);
-        			
-        			// remove piece from pieces that need to still move
-        			iter.remove();
-        			break;
-        		}
-        	}    		
-    	}
-    	return helpers;
-    }
-    
-    /**
-     * Try to make it to nearest border if already max strength
-     * @param pieces :all currently owned pieces
-     * @param map    :the game map
-     * @return       :list of moves for charging pieces
-     */
-    private static ArrayList<Move> maxStrengthCharge(Map<Piece,Site> pieces, GameMap map) {
-    	ArrayList<Move> charging = new ArrayList<Move>();
+    private static ArrayList<Move> spiral(Map<Piece,Site> pieces, GameMap map) {
+    	ArrayList<Move> spiralers = new ArrayList<Move>();
     	Iterator<Map.Entry<Piece,Site>> iter = pieces.entrySet().iterator();
     	while (iter.hasNext()) {
     		Map.Entry<Piece,Site> entry = iter.next();
     		Site site                   = entry.getValue();
     		Piece piece                 = entry.getKey();  
-    		if (site.strength >= 255) {
-    			// direction to closest border (TODO: take lowest strength path)
-    			Direction dir = directionToClosestBorder(map, site.owner, piece.getLocation().x, piece.getLocation().y);
-    			
-    			// don't run over other high strength pieces
-    			if (map.getSite(piece.getLocation(), dir).strength >= 240) {
-    				charging.add(piece.move(Direction.STILL));
-    				iter.remove();
-    				continue;
-    			}
-    			
-    			// update site moving away from
-    			Site oldSite = site;
-    			oldSite.strength = 0;
-    			update(map,piece.getLocation(),oldSite);
-    			
-    			// move to new site
-    			charging.add(piece.move(dir));
-    			
-    			// update new site
-    			site.strength = 255;
-    			update(map,piece.getLocation(),site);
-    			
-    			// remove piece from pieces that need to still move
+    		Direction spiralDir         = piece.getSpiralDir();
+    		Site destination            = map.getSite(piece.getLocation(), spiralDir);
+    		if ((site.owner == destination.owner) &&
+    				(site.strength + destination.strength <= 270 ) &&
+    				(site.strength + destination.strength >= 150 )) {
+    			Location newLoc = map.getLocation(piece.getLocation(), spiralDir);
+    			spiralers.add(piece.move(spiralDir,spiral[newLoc.y][newLoc.x]));
     			iter.remove();
     		}
     	}
-    	return charging;
-    }
-    
-    /**
-     * find the direction of the closest border to my territory
-     * @param map   :the game map
-     * @param owner :the owner of the piece
-     * @param x     :x-coordinate of piece
-     * @param y     :y-coordinate of piece
-     * @return
-     */
-    private static Direction directionToClosestBorder(GameMap map, int owner, int x, int y) {
-    	Direction dir = Direction.randomDirection();
-    	Direction dirX = Direction.EAST;
-    	Direction dirY = Direction.NORTH;
-    	int height = map.height-1;
-    	int width  = map.width-1;
-    	int minY = height;
-    	int minX = width;
-    	for (int h = 0; h<width; h++) {
-    		int east = offset(x+h, width);
-    		int destOwner = map.getSite(new Location(east, y)).owner;
-    		if (destOwner != owner) {
-    			if (destOwner != 0) { // enemy on border
-    				if (h < minX+4) minX = h;
-    			} else {              // unclaimed territory
-    				if (h < minX) minX = h;
-    			}
-    			dirX = Direction.EAST;
-    			break;
-    		}
-    		int west = offset(x-h, width);
-    		destOwner = map.getSite(new Location(west, y)).owner;
-    		if (destOwner != owner) {
-    			if (destOwner != 0) { // enemy on border
-    				if (h < minX+4) minX = h;
-    			} else {              // unclaimed territory
-    				if (h < minX) minX = h;
-    			}
-    			dirX = Direction.WEST;
-    			break;
-    		}
-    	}
-    	for (int v = 0; v<height; v++) {
-    		int north = offset(y-v, height);
-    		int destOwner = map.getSite(new Location(x, north)).owner;
-    		if (destOwner != owner) {
-    			if (destOwner != 0) { // enemy on border
-    				if (v < minY+4) minY = v;
-    			} else {              // unclaimed territory
-    				if (v < minY) minY = v;
-    			}
-    			dirY = Direction.NORTH;
-    			break;
-    		}
-    		int south = offset(y+v, height);
-    		destOwner = map.getSite(new Location(x, south)).owner;
-    		if (destOwner != owner) {
-      			if (destOwner != 0) { // enemy on border
-    				if (v < minY+4) minY = v;
-    			} else {              // unclaimed territory
-    				if (v < minY) minY = v;
-    			}
-    			dirY = Direction.SOUTH;
-    			break;
-    		}
-    	}
-    	if (minX<minY) {
-    		dir = dirX;
-    	} else if (minY<minX) {
-    		dir = dirY;
-    	} 
-    	return dir;
+    	return spiralers;
     }
     
     /**
@@ -277,16 +142,67 @@ public class MyBot {
     	}
     }
     
-    /**
-     * loop from 0 to max
-     */
-    private static int offset(int pos, int max) {
-    	if (pos>max) {
-    		return offset(pos-max-1, max);
-    	} else if (pos<0) {
-    		return offset(pos+max-1, max);
-    	} else {
-    		return pos;
-    	}
-    }
+	private static Direction calculateSpiralDirection(Location center, Location location, GameMap map) {
+		Direction dir = Direction.SOUTH;
+		Location currLoc = center;
+		int n = 0;
+		while(true) {
+			n++;
+			for (int i=0; i<2; i++) {
+				for (int j=0; j<n; j++){
+					if (location == currLoc) {
+						return dir;
+					}
+					currLoc = map.getLocation(currLoc, dir);
+				}
+				dir = turn(dir);
+			}
+		}
+	}
+	
+	private static Direction[][] calculateCenterSpiral(Location center, GameMap map) {
+		Direction[][] spiral = new Direction[map.height][map.width];
+		Location currLoc = center;
+		Direction dir = Direction.SOUTH;
+		boolean done = false;
+		int n = 0;
+		while (true) {
+			n++;
+			for (int i=0; i<2; i++) {
+				for (int j=0; j<n; j++){
+					if (spiral[currLoc.y][currLoc.x] != null) {
+						done = true;
+						break;
+					}
+					if (done) break;
+					spiral[currLoc.y][currLoc.x] = dir;
+				}
+				if (done) break;
+				currLoc = map.getLocation(currLoc, dir);
+			}
+			if (done) break;
+			dir = turn(dir);
+		}
+		for (int y=0; y<map.height; y++) {
+			for (int x=0; x<map.width; x++) {
+				if (spiral[y][x] == null) 
+					spiral[y][x] = Direction.SOUTH;
+			}
+		}
+		return spiral;
+	}
+	
+	private static Direction turn(Direction prev) {
+		if (prev == Direction.SOUTH) {
+			return Direction.EAST;
+		} else if (prev == Direction.EAST) {
+			return Direction.NORTH;
+		} else if (prev == Direction.NORTH) {
+			return Direction.WEST;
+		} else if (prev == Direction.WEST) {
+			return Direction.SOUTH;
+		} else {
+			return Direction.STILL;
+		}
+	}
 }
