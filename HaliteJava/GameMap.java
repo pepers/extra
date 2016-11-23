@@ -79,8 +79,12 @@ public class GameMap{
         Location l = getLocation(loc, dir);
         return contents.get(l.y).get(l.x);
     }
-
+    
     public Site getSite(Location loc) {
         return contents.get(loc.y).get(loc.x);
+    }
+    
+    public void setSite(Location loc, Site site) {
+    	contents.get(loc.y).set(loc.x, site);
     }
 }

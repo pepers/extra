@@ -9,123 +9,116 @@ public class MyBot {
     public static void main(String[] args) throws java.io.IOException {
         InitPackage iPackage = Networking.getInit();
         int myID = iPackage.myID;
-        GameMap gameMap = iPackage.map;
+        GameMap map = iPackage.map;
         
         Networking.sendInit("MyJavaBot");
         
         while(true) {
             ArrayList<Move> moves = new ArrayList<Move>();
 
-            gameMap = Networking.getFrame();
+            map = Networking.getFrame();
             
-            // all pieces owned by bot
-            Map<Piece,Site> pieces = new HashMap<Piece,Site>();
-
-            // get all bot's pieces
-            for(int y = 0; y < gameMap.height; y++) {
-                for(int x = 0; x < gameMap.width; x++) {
+            // highest production on site not owned by bot
+            int highProd = 0;
+            
+            // all sites owned by this bot
+            Map<Location,Site> bot = new HashMap<Location,Site>();
+           
+            // map the board
+            for(int y = 0; y < map.height; y++) {
+                for(int x = 0; x < map.width; x++) {
                 	Location loc = new Location(x,y);
-                    Site site = gameMap.getSite(loc);
+                    Site site = map.getSite(loc);
                     if(site.owner == myID) {
-                    	pieces.put(new Piece(loc,gameMap),site);
+                    	bot.put(loc,site);
+                    } else {
+                    	if (site.production > highProd)
+                    		highProd = site.production;
                     }
                 }
             }
             
-            // expand into new territory (enemy, or not owned)
-            moves.addAll(expandTerritory(pieces,gameMap));
+            /*
+             ***** attack weak nearby enemy
+             */
+            Iterator<Map.Entry<Location,Site>> iter1 = bot.entrySet().iterator();
+        	while (iter1.hasNext()) {
+        		Map.Entry<Location,Site> entry = iter1.next();
+        		Site site                      = entry.getValue();
+        		Location loc                   = entry.getKey(); 
+        		Location[] nearby              = new Location[4];
+        		nearby[0]                      = map.getLocation(loc, Direction.NORTH);
+        		nearby[1]                      = map.getLocation(loc, Direction.EAST);
+        		nearby[2]                      = map.getLocation(loc, Direction.SOUTH);
+        		nearby[3]                      = map.getLocation(loc, Direction.WEST);
+        		Site greaterProdSite           = null;
+        		Location greaterProdLoc        = null;
+        		Direction moveDir              = Direction.STILL;
+        		int offset                     = new Random().nextInt(4);
+        		// find site nearby with greatest production that can be beat
+        		for (int i=offset; i<4+offset; i++) {
+            		int j = i;
+            		if (j >= 4) j = j-4;
+            		Site neighbour = map.getSite(nearby[j]);            		
+            		if ((neighbour.owner != site.owner) &&
+            				(site.compareStr(neighbour) > -1)) {
+            			if (neighbour.compareProd(greaterProdSite) > 0) {
+            				greaterProdSite = neighbour;
+            				greaterProdLoc  = nearby[j];
+            				moveDir         = calcDirection(j);
+            			}
+            		} 
+            	}
+        		// site found on boarder to attack
+            	if (greaterProdSite != null) { 
+            		// site moving to
+            		greaterProdSite.strength = site.strength - greaterProdSite.strength;
+            		if (greaterProdSite.strength > 0) {
+            			greaterProdSite.owner = myID;
+            		}
+            		map.setSite(greaterProdLoc, greaterProdSite);
+            		
+            		// site moving from
+            		site.strength = 0;
+            		map.setSite(loc, site);
+            		
+            		moves.add(new Move(loc, moveDir));
+            		iter1.remove();
+            	}
+
+        	} 
            
-            // move strong reinforcements towards closest border
-            //moves.addAll(reinforcments(pieces,gameMap));
-            Iterator<Map.Entry<Piece,Site>> iter = pieces.entrySet().iterator();
-        	while (iter.hasNext()) {
-        		Map.Entry<Piece,Site> entry = iter.next();
-        		Site site                   = entry.getValue();
-        		Piece piece                 = entry.getKey(); 
-        		Location loc                = piece.getLocation();
-        		Direction closest           = directionToClosestBorder(gameMap,myID,loc.x,loc.y);
-        		Site neighbour              = gameMap.getSite(loc,closest);
-        		if (neighbour.strength < site.strength) {
-        			moves.add(piece.move(closest));
-        			iter.remove();
+            /*
+             ***** move strong reinforcements towards
+             ***** closest border
+             */
+            Iterator<Map.Entry<Location,Site>> iter2 = bot.entrySet().iterator();
+        	while (iter2.hasNext()) {
+        		Map.Entry<Location,Site> entry = iter2.next();
+        		Site site                      = entry.getValue();
+        		Location loc                   = entry.getKey(); 
+        		Direction closest              = directionToClosestBorder(map,myID,loc.x,loc.y);
+        		Site neighbour                 = map.getSite(loc,closest);
+        		if ((neighbour.owner == myID) &&
+        				(site.compareStr(neighbour) > 0)) {
+        			moves.add(new Move(loc,closest));
+        			
+        			// site moving to
+        			neighbour.strength += site.strength;
+        			if (neighbour.strength > 255) 
+        				neighbour.strength = 255;
+        			map.setSite(map.getLocation(loc,closest), neighbour);
+        			
+        			// site moving from
+            		site.strength = 0;
+            		map.setSite(loc, site);
+            		
+        			iter2.remove();
         		}
         	}
            
             Networking.sendFrame(moves);
         }
-    }
-    
-    /**
-     * attempt to expand territory into surrounding unowned spaces
-     * @param pieces :all currently owned pieces
-     * @param map    :the game map
-     * @return       :a list of any territory expanding moves
-     */
-    private static ArrayList<Move> expandTerritory(Map<Piece,Site> pieces, GameMap map) {
-    	ArrayList<Move> frontline = new ArrayList<Move>();
-    	Iterator<Map.Entry<Piece,Site>> iter = pieces.entrySet().iterator();
-    	while (iter.hasNext()) {
-    		Map.Entry<Piece,Site> entry = iter.next();
-    		Site site                   = entry.getValue();
-    		Piece piece                 = entry.getKey();  
-    		Location[] nearby           = (piece).getNearbyLocations();    		
-    		int offset                  = new Random().nextInt(4);
-        	for (int i=offset; i<4+offset; i++) {
-        		int j = i;
-        		if (j >= 4) j = j-4;
-        		Site neighbour = map.getSite(nearby[j]);
-        		if ((neighbour.owner != site.owner) &&
-        				(neighbour.strength < site.strength)) {
-        			frontline.add(piece.move(calcDirection(j)));
-        			iter.remove();
-        			break;
-        		} 
-        	}
-    	}
-    	return frontline;
-    }
-    
-    /**
-     * send strong reinforcements towards closest border
-     * @param pieces :all currently owned pieces
-     * @param map    :the game map
-     * @return       :a list of reinforcement deploying moves
-     */
-    private static ArrayList<Move> reinforcments(Map<Piece,Site> pieces, GameMap map) {
-    	ArrayList<Move> reinforcements = new ArrayList<Move>();
-    	Iterator<Map.Entry<Piece,Site>> iter = pieces.entrySet().iterator();
-    	while (iter.hasNext()) {
-    		Map.Entry<Piece,Site> entry = iter.next();
-    		Site site                   = entry.getValue();
-    		Piece piece                 = entry.getKey();
-    		if (site.strength >= 230) {
-	    		Location[] nearby = (piece).getNearbyLocations();
-	    		int weakpoint     = -1;
-	    		int offset        = new Random().nextInt(4);
-	        	for (int i=offset; i<4+offset; i++) {
-	        		int j = i;
-	        		if (j >= 4) j = j-4;
-	        		Site neighbour = map.getSite(nearby[j]);
-	        		if (neighbour.owner == site.owner) {
-	        			if (weakpoint >= 0) {
-	        				if (map.getSite(nearby[weakpoint]).production > neighbour.production) {
-	        					weakpoint = j;
-	        				}
-	        			} 
-	        		} 
-	        	}
-	        	// follow path of least destruction
-	        	if (weakpoint >= 0) {
-	        		reinforcements.add(piece.move(calcDirection(weakpoint)));
-	        	// go towards closest border
-	        	} else {
-	        		Location loc = piece.getLocation();
-	        		reinforcements.add(piece.move(directionToClosestBorder(map, site.owner, loc.x, loc.y)));
-	        	}
-	        	iter.remove();
-    		}
-    	}
-    	return reinforcements;
     }
     
     /**		
